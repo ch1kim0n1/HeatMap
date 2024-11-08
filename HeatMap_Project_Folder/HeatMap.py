@@ -1,100 +1,61 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+from moviepy.editor import ImageSequenceClip
 import os
 
 def main():
-    # Create 'output' folder if it doesn't exist
-    if not os.path.exists('output'):
-        os.makedirs('output')
+    # Define custom output path
+    output_path = "./HeatMap/HeatMap_Project_Folder/output"  # Change this to your desired folder path
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
 
-    # Define file path
-    data_file = "./HeatMap_Project_Folder/data.csv"
-
-    # Read data with error handling
+    # Read data
+    data_file = "./HeatMap/HeatMap_Project_Folder/data.csv"
     try:
-        # Check if the file exists
-        if not os.path.isfile(data_file):
-            raise FileNotFoundError(f"File '{data_file}' not found. Please ensure it is in the same directory as the script.")
-
-        # Load CSV file
         data = pd.read_csv(data_file)
-
-        # Ensure the required columns exist
         required_columns = {'Time', 'Latitude', 'Longitude'}
         if not required_columns.issubset(data.columns):
             missing_columns = required_columns - set(data.columns)
-            raise ValueError(f"CSV file must contain the following columns: {required_columns}. Missing columns: {missing_columns}")
-
-    except FileNotFoundError as fnf_error:
-        print(fnf_error)
-        return  # Exit the program if the file is missing
+            raise ValueError(f"CSV file must contain columns: {required_columns}. Missing: {missing_columns}")
+    except FileNotFoundError:
+        print(f"Error: '{data_file}' not found.")
+        return
     except ValueError as ve:
         print(ve)
-        return  # Exit the program if columns are missing
-    except pd.errors.ParserError:
-        print(f"Error parsing '{data_file}'. Ensure it is a valid CSV file.")
         return
 
     # Process data
-    try:
-        # Convert 'Time' column to datetime and sort by it
-        data['Time'] = pd.to_datetime(data['Time'])
-        data = data.sort_values('Time').reset_index(drop=True)
-    except Exception as e:
-        print(f"Error processing data: {e}")
-        return
+    data['Time'] = pd.to_datetime(data['Time'])
+    data = data.sort_values('Time').reset_index(drop=True)
 
-    # Create outputs
-    create_animation(data)
-    create_heatmap(data)
-    create_scatter_plot(data)
+    # Create video with MoviePy
+    create_moviepy_video(data)
 
-def create_animation(data):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sc = ax.scatter([], [], s=50)
+def create_moviepy_video(data):
+    frames = []  # List to hold each frame as an image array
 
-    def init():
+    for i in range(len(data)):
+        # Create figure and plot the current frame
+        fig, ax = plt.subplots(figsize=(6, 4))
         ax.set_xlim(data['Longitude'].min() - 1, data['Longitude'].max() + 1)
         ax.set_ylim(data['Latitude'].min() - 1, data['Latitude'].max() + 1)
-        ax.set_xlabel('Longitude')
-        ax.set_ylabel('Latitude')
-        ax.set_title('Animated Movement of Points')
-        return sc,
+        ax.scatter(data['Longitude'].iloc[:i+1], data['Latitude'].iloc[:i+1], c='blue')
+        ax.set_title("Animated Path")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        
+        # Convert plot to an image array
+        fig.canvas.draw()
+        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        frames.append(img)  # Add the image to the frames list
+        plt.close(fig)  # Close the figure to save memory
 
-    def animate(i):
-        current_data = data.iloc[:i+1]
-        sc.set_offsets(np.c_[current_data['Longitude'], current_data['Latitude']])
-        return sc,
-
-    ani = animation.FuncAnimation(fig, animate, init_func=init,
-                                  frames=len(data), interval=200, blit=True)
-
-    ani.save('output/animation.mp4', writer='ffmpeg')
-    plt.close()
-    print("Animation saved to 'output/animation.mp4'.")
-
-def create_heatmap(data):
-    plt.figure(figsize=(10, 6))
-    plt.hist2d(data['Longitude'], data['Latitude'], bins=50, cmap='jet')
-    plt.colorbar(label='Strength')
-    plt.xlabel('Longitude')
-    plt.ylabel('Latitude')
-    plt.title('Heat Map')
-    plt.savefig('output/heatmap.png')
-    plt.close()
-    print("Heat map saved to 'output/heatmap.png'.")
-
-def create_scatter_plot(data):
-    plt.figure(figsize=(10, 6))
-    plt.scatter(data['Longitude'], data['Latitude'], c='blue', s=10)
-    plt.xlabel('Longitude')
-    plt.ylabel('Latitude')
-    plt.title('Scatter Plot of Points')
-    plt.savefig('output/scatter_plot.png')
-    plt.close()
-    print("Scatter plot saved to 'output/scatter_plot.png'.")
+    # Create video using MoviePy
+    clip = ImageSequenceClip(frames, fps=30)  # Adjust FPS as needed
+    clip.write_videofile("./HeatMap/HeatMap_Project_Folder/output/animation.mp4", codec="libx264")
+    print("Video saved as 'output/animation.mp4'")
 
 if __name__ == "__main__":
     main()
