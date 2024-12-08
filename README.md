@@ -7,6 +7,7 @@ Python project to visualize data with a graph and heatmap
 
 ## How to run
 
+- clone repo on your desktop
 - Install necessary libraries
 - Open python code in VSCode
 - Run code with sample data
