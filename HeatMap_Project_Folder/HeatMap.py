@@ -1,146 +1,149 @@
-import pandas as pd
+import pygame
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, Normalize
-from moviepy.editor import ImageSequenceClip
-import os
-import logging
-from datetime import datetime
-import matplotlib.dates as mdates
+import pandas as pd
+import csv
+from scipy.ndimage import gaussian_filter
+import time
+from pathlib import Path
+import colorsys
 
-plt.style.use('seaborn-darkgrid')
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def main():
-    # Configuration
-    data_file = "./HeatMap/HeatMap_Project_Folder/data.csv"
-    output_path = "./HeatMap/HeatMap_Project_Folder/output"
-    fps = 30
-    frame_width = 10
-    frame_height = 6
-    dpi = 100
-    bins = 50  # Number of bins for 2D histogram
-
-    # Ensure output directory exists
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-
-    # Load and validate data
-    data = load_data(data_file)
-
-    # Sort data by time and reset index
-    data['Time'] = pd.to_datetime(data['Time'])
-    data = data.sort_values('Time').reset_index(drop=True)
-
-    # Extract latitude and longitude arrays
-    lat = data['Latitude'].values
-    lon = data['Longitude'].values
-
-    # Compute global min/max for consistent frame plotting
-    lat_min, lat_max = lat.min() - 0.5, lat.max() + 0.5
-    lon_min, lon_max = lon.min() - 0.5, lon.max() + 0.5
-
-    # Precompute global histogram range and colormap normalization based on total data
-    full_hist, xedges, yedges = np.histogram2d(lat, lon, bins=bins, 
-                                               range=[[lat_min, lat_max], [lon_min, lon_max]])
-    max_density = full_hist.max()
-
-    # Define a custom colormap for the heatmap
-    # This can be customized further, e.g., adding more segments
-    cmap = LinearSegmentedColormap.from_list("custom_heatmap", 
-                                             ["#000004", "#2c115f", "#721f81", "#b73779", "#f1605d", "#feb078", "#fcfdbf"])
-    norm = Normalize(vmin=0, vmax=max_density)
-
-    # Generate frames
-    frames = generate_frames(data, lat, lon, xedges, yedges, bins, cmap, norm, lat_min, lat_max, lon_min, lon_max, 
-                             frame_width, frame_height, dpi)
-
-    # Create video
-    output_file = os.path.join(output_path, "animation.mp4")
-    create_video(frames, output_file, fps)
-    logging.info(f"Video saved as '{output_file}'")
-
-def load_data(data_file):
-    """Loads data from CSV and checks for required columns."""
-    logging.info(f"Loading data from {data_file}")
-    try:
-        data = pd.read_csv(data_file)
-        required_columns = {'Time', 'Latitude', 'Longitude'}
-        if not required_columns.issubset(data.columns):
-            missing_columns = required_columns - set(data.columns)
-            raise ValueError(f"CSV file must contain columns: {required_columns}. Missing: {missing_columns}")
-        return data
-    except FileNotFoundError:
-        logging.error(f"Error: '{data_file}' not found.")
-        raise
-    except ValueError as ve:
-        logging.error(str(ve))
-        raise
-
-def generate_frames(data, lat, lon, xedges, yedges, bins, cmap, norm, lat_min, lat_max, lon_min, lon_max, fw, fh, dpi):
-    """
-    Generate a list of image frames from the data. Each frame is a cumulative heatmap:
-    at frame i, it includes all points from 0 to i.
-    """
-    logging.info("Generating frames for the video animation...")
-    frames = []
-    
-    # We'll accumulate data frame by frame, updating a 2D histogram
-    lat_so_far = []
-    lon_so_far = []
-    
-    for i in range(len(data)):
-        lat_so_far.append(lat[i])
-        lon_so_far.append(lon[i])
-
-        # Compute cumulative histogram up to the current point
-        hist, _, _ = np.histogram2d(lat_so_far, lon_so_far, bins=bins, range=[[lat_min, lat_max], [lon_min, lon_max]])
-
-        # Create a figure and plot the heatmap
-        fig, ax = plt.subplots(figsize=(fw, fh), dpi=dpi)
-        im = ax.imshow(hist.T, origin='lower', cmap=cmap, norm=norm,
-                       extent=[lat_min, lat_max, lon_min, lon_max],
-                       aspect='auto')
+class HeatmapVisualizer:
+    def __init__(self, width=800, height=600):
+        pygame.init()
+        self.width = width
+        self.height = height
+        self.screen = pygame.display.set_mode((width, height))
+        pygame.display.set_caption("Interactive Heatmap Visualizer")
+        self.heatmap = np.zeros((height, width))
+        self.max_intensity = 1.0
+        self.font = pygame.font.Font(None, 36)
+        self.small_font = pygame.font.Font(None, 24)
+        self.start_time = time.time()
+        self.total_area = width * height
+        self.visited_pixels = set()
+        self.generate_colormap(256)
+        self.current_pos = [width//2, height//2]
+        self.mouse_mode = True
+        self.csv_data = None
+        self.csv_index = 0
+        self.control_rect = pygame.Rect(10, height - 80, 200, 60)
+        self.mouse_button = pygame.Rect(20, height - 70, 80, 40)
+        self.csv_button = pygame.Rect(120, height - 70, 80, 40)
         
-        # Add a colorbar for reference (only show after a few frames to avoid clutter at the start)
-        if i > 0:
-            cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label('Density', rotation=270, labelpad=15)
-
-        # Add scatter for the most recent point for clarity (optional)
-        ax.scatter(lat[i], lon[i], c='white', edgecolors='black', s=50, alpha=0.8, label='Current Point')
-
-        # Enhance plot labeling
-        ax.set_title(f"Heatmap Over Time\nFrame {i+1}/{len(data)} - Time: {data['Time'].iloc[i].strftime('%Y-%m-%d %H:%M:%S')}")
-        ax.set_xlabel("Latitude")
-        ax.set_ylabel("Longitude")
-        ax.set_xlim(lat_min, lat_max)
-        ax.set_ylim(lon_min, lon_max)
-
-        # Add a legend just once we have at least one point
-        if i > 0:
-            ax.legend(loc='upper right')
-
-        # Convert figure to image array
-        fig.canvas.draw()
-        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-        frames.append(img)
-        plt.close(fig)
-
-        if (i + 1) % 50 == 0:  # Log progress every 50 frames
-            logging.info(f"Processed {i+1}/{len(data)} frames")
-
-    logging.info("All frames generated.")
-    return frames
-
-def create_video(frames, output_file, fps):
-    """Create a video file from a list of frames using MoviePy."""
-    logging.info(f"Creating video at {output_file} with {len(frames)} frames at {fps} fps")
-    clip = ImageSequenceClip(frames, fps=fps)
-    clip.write_videofile(output_file, codec="libx264", audio=False)
-    logging.info("Video creation complete.")
+    def generate_colormap(self, n):
+        self.colors = []
+        for i in range(n):
+            h = 0.7 - (i / n) * 0.7
+            s = 0.8
+            v = 0.9
+            rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h, s, v))
+            self.colors.append(rgb)
+    
+    def load_csv(self, filename):
+        self.csv_data = pd.read_csv(filename)
+        
+    def update_heatmap(self, x, y):
+        radius = 20
+        y_indices, x_indices = np.ogrid[-radius:radius+1, -radius:radius+1]
+        mask = x_indices**2 + y_indices**2 <= radius**2
+        
+        for dy in range(-radius, radius+1):
+            for dx in range(-radius, radius+1):
+                if mask[dy+radius, dx+radius]:
+                    py, px = int(y+dy), int(x+dx)
+                    if 0 <= px < self.width and 0 <= py < self.height:
+                        self.heatmap[py, px] += 0.1
+                        self.visited_pixels.add((px, py))
+        
+        self.heatmap = gaussian_filter(self.heatmap, sigma=1)
+        
+    def render_heatmap(self):
+        normalized = np.clip(self.heatmap / self.max_intensity, 0, 1)
+        surface = pygame.Surface((self.width, self.height))
+        
+        for y in range(self.height):
+            for x in range(self.width):
+                intensity = int(normalized[y, x] * (len(self.colors)-1))
+                color = self.colors[intensity]
+                surface.set_at((x, y), color)
+        
+        self.screen.blit(surface, (0, 0))
+        
+    def render_controls(self):
+        pygame.draw.rect(self.screen, (50, 50, 50), self.control_rect)
+        
+        mouse_color = (100, 255, 100) if self.mouse_mode else (100, 100, 100)
+        csv_color = (100, 255, 100) if not self.mouse_mode else (100, 100, 100)
+        
+        pygame.draw.rect(self.screen, mouse_color, self.mouse_button)
+        pygame.draw.rect(self.screen, csv_color, self.csv_button)
+        
+        mouse_text = self.small_font.render("Mouse", True, (0, 0, 0))
+        csv_text = self.small_font.render("CSV", True, (0, 0, 0))
+        
+        self.screen.blit(mouse_text, (self.mouse_button.centerx - mouse_text.get_width()//2,
+                                    self.mouse_button.centery - mouse_text.get_height()//2))
+        self.screen.blit(csv_text, (self.csv_button.centerx - csv_text.get_width()//2,
+                                   self.csv_button.centery - csv_text.get_height()//2))
+        
+    def render_stats(self):
+        elapsed_time = int(time.time() - self.start_time)
+        coverage = len(self.visited_pixels) / self.total_area * 100
+        
+        time_text = f"Time: {elapsed_time}s"
+        time_surface = self.font.render(time_text, True, (255, 255, 255))
+        self.screen.blit(time_surface, (10, 10))
+        
+        coverage_text = f"Coverage: {coverage:.1f}%"
+        coverage_surface = self.font.render(coverage_text, True, (255, 255, 255))
+        self.screen.blit(coverage_surface, (10, 50))
+        
+    def handle_mouse_click(self, pos):
+        if self.mouse_button.collidepoint(pos):
+            self.mouse_mode = True
+        elif self.csv_button.collidepoint(pos):
+            self.mouse_mode = False
+            
+    def run(self):
+        running = True
+        clock = pygame.time.Clock()
+        
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self.handle_mouse_click(event.pos)
+                    
+            if self.mouse_mode:
+                x, y = pygame.mouse.get_pos()
+                self.current_pos = [x, y]
+            else:
+                if self.csv_data is not None:
+                    if self.csv_index < len(self.csv_data):
+                        row = self.csv_data.iloc[self.csv_index]
+                        self.current_pos = [row['x'], row['y']]
+                        self.csv_index += 1
+                    else:
+                        self.csv_index = 0
+            
+            self.update_heatmap(*self.current_pos)
+            self.render_heatmap()
+            self.render_stats()
+            self.render_controls()
+            
+            pygame.draw.circle(self.screen, (255, 255, 255), 
+                             (int(self.current_pos[0]), int(self.current_pos[1])), 5)
+            
+            pygame.display.flip()
+            clock.tick(30)
+        
+        pygame.quit()
 
 if __name__ == "__main__":
-    main()
+    visualizer = HeatmapVisualizer()
+    
+    if not Path('movement_path.csv').exists():
+        generate_coordinate_path('movement_path.csv')
+    visualizer.load_csv('movement_path.csv')
+    visualizer.run()
