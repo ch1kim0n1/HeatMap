@@ -11,3 +11,7 @@ Python project to visualize data with a graph and heatmap
 - Install necessary libraries
 - Open python code in VSCode
 - Run code with sample data
+
+## TODO
+* make sure that headers work on C++
+* Make C++ runner code
