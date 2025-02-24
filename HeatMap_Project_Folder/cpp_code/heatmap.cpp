@@ -1,411 +1,411 @@
-#include <SFML/Graphics.hpp>
-#include <SFML/Window.hpp>
-#include <SFML/System.hpp>
+#include <SDL.h>
+#include <SDL_ttf.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <vector>
-#include <chrono>
+#include <string>
 #include <cmath>
-#include <set>
+#include <cstdlib>
+#include <ctime>
+#include <random>
 
-// ================== HSV to RGB Helper Function ==================
-// Converts an HSV color to an sf::Color in RGB space.
-// H in [0, 1], S in [0, 1], V in [0, 1].
-sf::Color hsvToRgb(float h, float s, float v)
-{
-    // Wrap hue to [0,1]
-    if (h < 0.f) h += 1.f;
-    if (h > 1.f) h -= 1.f;
+// Window dimensions
+const int WIDTH = 800;
+const int HEIGHT = 600;
+
+// Structure to store a point from the CSV data
+struct Point {
+    int frame;
+    int x;
+    int y;
+};
+
+// Simple CSV loader (skips header)
+std::vector<Point> loadCSV(const std::string& filename) {
+    std::vector<Point> points;
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open CSV file: " << filename << std::endl;
+        return points;
+    }
+    std::string line;
+    std::getline(file, line); // skip header
+    while (std::getline(file, line)) {
+        std::istringstream ss(line);
+        std::string token;
+        Point p;
+        std::getline(ss, token, ',');
+        p.frame = std::stoi(token);
+        std::getline(ss, token, ',');
+        p.x = static_cast<int>(std::round(std::stof(token)));
+        std::getline(ss, token, ',');
+        p.y = static_cast<int>(std::round(std::stof(token)));
+        points.push_back(p);
+    }
+    return points;
+}
+
+// Generates a coordinate path CSV file similar to the Python random_data.py code.
+void generateCoordinatePath(const std::string& filename, int duration = 30, int fps = 30) {
+    int total_frames = duration * fps;
+    std::vector<float> x(total_frames), y(total_frames), t(total_frames);
+    float two_pi = 2 * M_PI;
+    for (int i = 0; i < total_frames; i++) {
+        t[i] = two_pi * i / total_frames; // linearly spaced between 0 and 2pi
+    }
     
+    std::default_random_engine generator(std::time(0));
+    std::uniform_int_distribution<int> jumpXDist(-200, 200);
+    std::uniform_int_distribution<int> jumpYDist(-150, 150);
+    std::uniform_int_distribution<int> zigzagDist(0, 1); // 0 -> -50, 1 -> 50
+    std::uniform_real_distribution<float> probDist(0.0f, 1.0f);
+    std::uniform_int_distribution<int> randomXDist(100, 700);
+    std::uniform_int_distribution<int> randomYDist(100, 500);
+    
+    for (int i = 0; i < total_frames; i++) {
+        float base_x = 400 + 150 * std::sin(3 * t[i]);
+        float base_y = 300 + 150 * std::cos(2 * t[i]);
+        
+        if (i % (fps * 2) == 0) {
+            base_x += jumpXDist(generator);
+            base_y += jumpYDist(generator);
+        }
+        
+        if (i % (fps / 2) == 0) {
+            int zigzag = (zigzagDist(generator) == 0 ? -50 : 50);
+            base_x += zigzag;
+            base_y += zigzag;
+        }
+        
+        if (probDist(generator) < 0.05f) {
+            base_x = randomXDist(generator);
+            base_y = randomYDist(generator);
+        }
+        
+        // Clip the values
+        if (base_x < 50) base_x = 50;
+        if (base_x > 750) base_x = 750;
+        if (base_y < 50) base_y = 50;
+        if (base_y > 550) base_y = 550;
+        
+        x[i] = base_x;
+        y[i] = base_y;
+    }
+    
+    std::ofstream ofs(filename);
+    ofs << "frame,x,y\n";
+    for (int i = 0; i < total_frames; i++) {
+        ofs << i << "," << std::round(x[i] * 100) / 100 << "," << std::round(y[i] * 100) / 100 << "\n";
+    }
+    ofs.close();
+}
+
+// Converts HSV values to an SDL_Color in RGB format.
+SDL_Color HSVtoRGB(float h, float s, float v) {
     float r, g, b;
-    
-    float i = std::floor(h * 6);
+    int i = int(h * 6);
     float f = h * 6 - i;
     float p = v * (1 - s);
     float q = v * (1 - f * s);
     float t = v * (1 - (1 - f) * s);
-
-    switch (static_cast<int>(i) % 6) {
-        case 0: r = v; g = t; b = p; break;
-        case 1: r = q; g = v; b = p; break;
-        case 2: r = p; g = v; b = t; break;
-        case 3: r = p; g = q; b = v; break;
-        case 4: r = t; g = p; b = v; break;
-        case 5: r = v; g = p; b = q; break;
-        default: r = g = b = 0.f; // Fallback
+    switch(i % 6) {
+        case 0: r = v, g = t, b = p; break;
+        case 1: r = q, g = v, b = p; break;
+        case 2: r = p, g = v, b = t; break;
+        case 3: r = p, g = q, b = v; break;
+        case 4: r = t, g = p, b = v; break;
+        case 5: r = v, g = p, b = q; break;
     }
-
-    return sf::Color(
-        static_cast<sf::Uint8>(r * 255),
-        static_cast<sf::Uint8>(g * 255),
-        static_cast<sf::Uint8>(b * 255)
-    );
+    SDL_Color color;
+    color.r = static_cast<Uint8>(r * 255);
+    color.g = static_cast<Uint8>(g * 255);
+    color.b = static_cast<Uint8>(b * 255);
+    color.a = 255;
+    return color;
 }
 
-// ================== Gaussian Blur (Optional) ==================
-// A simple blur function that applies a small Gaussian kernel.
-void applyGaussianBlur(std::vector<float>& heatmap, int width, int height)
-{
-    // For speed, use a small kernel (3x3 or 5x5).
-    // A large kernel size repeated every frame can be slow in C++.
-    const int kernelSize = 3;
-    float kernel[3][3] = {
-        { 1.f/16, 2.f/16, 1.f/16 },
-        { 2.f/16, 4.f/16, 2.f/16 },
-        { 1.f/16, 2.f/16, 1.f/16 }
-    };
-
-    std::vector<float> temp(heatmap); // Copy original heatmap
-    
-    for(int y = 0; y < height; ++y) {
-        for(int x = 0; x < width; ++x) {
-            float sum = 0.f;
-            for(int ky = 0; ky < kernelSize; ++ky) {
-                for(int kx = 0; kx < kernelSize; ++kx) {
-                    int ix = x + (kx - 1);
-                    int iy = y + (ky - 1);
-                    if(ix >= 0 && ix < width && iy >= 0 && iy < height) {
-                        sum += temp[iy * width + ix] * kernel[ky][kx];
-                    }
-                }
-            }
-            heatmap[y * width + x] = sum;
-        }
-    }
-}
-
-// ================== Main Class (Similar to your Python Class) ==================
+// The main class that mimics the HeatmapVisualizer from Python.
 class HeatmapVisualizer {
 public:
-    HeatmapVisualizer(int width, int height)
-        : m_width(width), m_height(height),
-          m_window(sf::VideoMode(width, height), "Interactive Heatmap Visualizer"),
-          m_heatmap(width * height, 0.f),
-          m_maxIntensity(1.0f),
-          m_mouseMode(true),
-          m_currentPos(width / 2.f, height / 2.f),
-          m_visitedPixels(),
-          m_fontLoaded(false),
-          m_csvIndex(0)
+    HeatmapVisualizer(int width = 800, int height = 600)
+    : width(width), height(height), max_intensity(1.0f), mouse_mode(true), csv_index(0)
     {
-        // Limit the FPS (avoid busy loop)
-        m_window.setFramerateLimit(30);
-
-        // Attempt to load a font (for stats and button text)
-        if (m_font.loadFromFile("arial.ttf")) {
-            m_fontLoaded = true;
-        }
+        SDL_Init(SDL_INIT_VIDEO);
+        TTF_Init();
+        window = SDL_CreateWindow("Interactive Heatmap Visualizer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+        heatmap.assign(width * height, 0.0f);
+        visited.assign(width * height, false);
+        total_area = width * height;
+        start_time = SDL_GetTicks();
+        generateColormap(256);
+        current_pos = {width / 2, height / 2};
+        // Define control button rectangles
+        control_rect = {10, height - 80, 200, 60};
+        mouse_button = {20, height - 70, 80, 40};
+        csv_button = {120, height - 70, 80, 40};
         
-        // Prepare color map (just like your Python code’s “generate_colormap(256)”)
-        generateColorMap(256);
-
-        // Record the start time
-        m_startTime = std::chrono::steady_clock::now();
+        // Load a font (ensure "OpenSans-Regular.ttf" exists in your working directory)
+        font = TTF_OpenFont("OpenSans-Regular.ttf", 36);
+        small_font = TTF_OpenFont("OpenSans-Regular.ttf", 24);
+        if (!font || !small_font) {
+            std::cerr << "Failed to load font. Make sure OpenSans-Regular.ttf is available." << std::endl;
+        }
+    }
+    
+    ~HeatmapVisualizer() {
+        if (font) TTF_CloseFont(font);
+        if (small_font) TTF_CloseFont(small_font);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        TTF_Quit();
+        SDL_Quit();
+    }
+    
+    void loadCSV(const std::string& filename) {
+        csv_data = loadCSV(filename);
+    }
+    
+    void run() {
+        bool running = true;
+        SDL_Event event;
+        Uint32 frameDelay = 1000 / 30; // aiming for ~30 fps
         
-        // Setup “buttons” area (basic rectangular regions)
-        // NOTE: We do not implement clickable GUIs in detail here,
-        //       but show the concept for switching modes.
-        m_mouseButton = sf::FloatRect(20.f, m_height - 70.f, 80.f, 40.f);
-        m_csvButton   = sf::FloatRect(120.f, m_height - 70.f, 80.f, 40.f);
-    }
-
-    // Read CSV data into m_csvData (vector of (x,y) pairs)
-    // This is simplistic; adapt for your CSV format.
-    void loadCsv(const std::string& filename)
-    {
-        std::ifstream file(filename);
-        if (!file.is_open()) {
-            std::cerr << "Error: Could not open CSV file: " << filename << "\n";
-            return;
-        }
-
-        m_csvData.clear();
-        std::string line;
-        // Suppose your CSV has headers "x,y" in the first line, and numeric data afterward
-        // You can skip the header by reading one line first.
-        bool firstLine = true;
-
-        while (std::getline(file, line)) {
-            if (firstLine) {
-                firstLine = false;
-                continue; // skip header
-            }
-            if (line.empty()) continue;
-            std::stringstream ss(line);
-            float x, y;
-            char comma;
-            if (ss >> x >> comma >> y) {
-                m_csvData.push_back({x, y});
-            }
-        }
-        file.close();
-        m_csvIndex = 0;
-    }
-
-    // Main run loop
-    void run()
-    {
-        while (m_window.isOpen())
-        {
-            // Process events
-            sf::Event event;
-            while (m_window.pollEvent(event))
-            {
-                if (event.type == sf::Event::Closed) {
-                    m_window.close();
-                }
-                else if (event.type == sf::Event::MouseButtonPressed) {
-                    handleMouseClick(sf::Mouse::getPosition(m_window));
+        while (running) {
+            Uint32 frameStart = SDL_GetTicks();
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    running = false;
+                } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                    int mx = event.button.x;
+                    int my = event.button.y;
+                    handleMouseClick(mx, my);
                 }
             }
-
-            // Update logic
-            updatePosition();
-            updateHeatmap(static_cast<int>(m_currentPos.x), static_cast<int>(m_currentPos.y));
-
-            // (Optional) Blur the heatmap
-            applyGaussianBlur(m_heatmap, m_width, m_height);
-
-            // Clear and draw
-            m_window.clear(sf::Color::Black);
+            
+            // Update the current position based on mode
+            if (mouse_mode) {
+                int x, y;
+                SDL_GetMouseState(&x, &y);
+                current_pos = {x, y};
+            } else {
+                if (!csv_data.empty()) {
+                    current_pos = {csv_data[csv_index].x, csv_data[csv_index].y};
+                    csv_index = (csv_index + 1) % csv_data.size();
+                }
+            }
+            
+            updateHeatmap(current_pos.first, current_pos.second);
+            applyGaussianBlur();
+            
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
             renderHeatmap();
             renderStats();
             renderControls();
-
-            // Draw the current position indicator (like a white circle in Python)
-            sf::CircleShape indicator(5.f);
-            indicator.setFillColor(sf::Color::White);
-            indicator.setPosition(m_currentPos.x - 5.f, m_currentPos.y - 5.f);
-            m_window.draw(indicator);
-
-            m_window.display();
-        }
-    }
-
-private:
-    // Generate a smooth color map (purple to red in your code)
-    void generateColorMap(int n)
-    {
-        m_colors.clear();
-        m_colors.reserve(n);
-        for (int i = 0; i < n; ++i) {
-            float h = 0.7f - (static_cast<float>(i) / n) * 0.7f;  // Purple -> Red
-            float s = 0.8f;
-            float v = 0.9f;
-            sf::Color c = hsvToRgb(h, s, v);
-            m_colors.push_back(c);
-        }
-    }
-
-    // Update the current position based on mode
-    void updatePosition()
-    {
-        if (m_mouseMode) {
-            // Mouse-based: get current mouse position relative to window
-            sf::Vector2i mp = sf::Mouse::getPosition(m_window);
-            m_currentPos.x = static_cast<float>(mp.x);
-            m_currentPos.y = static_cast<float>(mp.y);
-        } else {
-            // CSV-based
-            if (!m_csvData.empty()) {
-                if (m_csvIndex < m_csvData.size()) {
-                    m_currentPos.x = m_csvData[m_csvIndex].first;
-                    m_currentPos.y = m_csvData[m_csvIndex].second;
-                    m_csvIndex++;
-                } else {
-                    // Loop or stop if we reach the end?
-                    m_csvIndex = 0;
-                }
+            
+            // Draw the current position as a white circle
+            drawCircle(current_pos.first, current_pos.second, 5, {255, 255, 255, 255});
+            
+            SDL_RenderPresent(renderer);
+            Uint32 frameTime = SDL_GetTicks() - frameStart;
+            if (frameDelay > frameTime) {
+                SDL_Delay(frameDelay - frameTime);
             }
         }
     }
-
-    // Update heatmap around (x, y)
-    void updateHeatmap(int x, int y)
-    {
-        // “Radius = 20” circle
-        const int radius = 20;
-        for (int dy = -radius; dy <= radius; ++dy) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                int xx = x + dx;
-                int yy = y + dy;
-                if (xx >= 0 && xx < m_width && yy >= 0 && yy < m_height) {
-                    // Check circle boundary
-                    if (dx * dx + dy * dy <= radius * radius) {
-                        // Increase intensity
-                        int idx = yy * m_width + xx;
-                        m_heatmap[idx] += 0.1f;
-                        // Track visited pixel
-                        m_visitedPixels.insert(idx);
+    
+private:
+    int width, height;
+    float max_intensity;
+    std::vector<float> heatmap;
+    std::vector<float> heatmap_buffer; // temporary buffer for blur
+    std::vector<bool> visited;
+    unsigned int total_area;
+    Uint32 start_time;
+    bool mouse_mode;
+    std::pair<int, int> current_pos;
+    std::vector<SDL_Color> colormap;
+    SDL_Rect control_rect, mouse_button, csv_button;
+    std::vector<Point> csv_data;
+    size_t csv_index;
+    
+    SDL_Window* window;
+    SDL_Renderer* renderer;
+    TTF_Font* font;
+    TTF_Font* small_font;
+    
+    // Create a colormap (similar to Python’s generate_colormap)
+    void generateColormap(int n) {
+        colormap.clear();
+        for (int i = 0; i < n; i++) {
+            float h = 0.7f - (i / (float)n) * 0.7f;
+            float s = 0.8f;
+            float v = 0.9f;
+            colormap.push_back(HSVtoRGB(h, s, v));
+        }
+    }
+    
+    // Update heatmap by adding intensity to pixels within a radius around (x, y)
+    void updateHeatmap(int x, int y) {
+        int radius = 20;
+        for (int dy = -radius; dy <= radius; dy++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                if (dx * dx + dy * dy <= radius * radius) {
+                    int px = x + dx;
+                    int py = y + dy;
+                    if (px >= 0 && px < width && py >= 0 && py < height) {
+                        heatmap[py * width + px] += 0.1f;
+                        visited[py * width + px] = true;
                     }
                 }
             }
         }
-        // Update max intensity if needed
-        // (Or you can keep it fixed.)
-        // For performance, you might want to recalc less often.
-        // But this ensures colors keep scaling as intensities grow.
-        float currentMax = 0.f;
-        for (auto val : m_heatmap) {
-            if (val > currentMax) currentMax = val;
-        }
-        m_maxIntensity = currentMax < 1.0f ? 1.0f : currentMax;
     }
-
-    // Render the heatmap
-    void renderHeatmap()
-    {
-        // We draw pixel-by-pixel with an sf::Image or directly on a texture.
-        // Here, we use an sf::Image for simplicity.
-        sf::Image image;
-        image.create(m_width, m_height, sf::Color::Black);
-
-        for (int y = 0; y < m_height; ++y) {
-            for (int x = 0; x < m_width; ++x) {
-                int idx = y * m_width + x;
-                float val = m_heatmap[idx] / m_maxIntensity; // normalized [0..1]
-                if (val > 1.f) val = 1.f;
-                int colorIndex = static_cast<int>(val * (m_colors.size() - 1));
-                if (colorIndex < 0) colorIndex = 0;
-                if (colorIndex >= (int)m_colors.size()) colorIndex = (int)m_colors.size() - 1;
-                image.setPixel(x, y, m_colors[colorIndex]);
+    
+    // Apply a simple 5x5 Gaussian blur to the heatmap
+    void applyGaussianBlur() {
+        const int kSize = 5;
+        const int kHalf = kSize / 2;
+        double kernel[5][5] = {
+            {1, 4, 7, 4, 1},
+            {4, 16, 26, 16, 4},
+            {7, 26, 41, 26, 7},
+            {4, 16, 26, 16, 4},
+            {1, 4, 7, 4, 1}
+        };
+        double kernelSum = 273.0; // sum of kernel elements
+        
+        heatmap_buffer = heatmap; // copy current heatmap
+        
+        for (int j = 0; j < height; j++) {
+            for (int i = 0; i < width; i++) {
+                double sum = 0.0;
+                for (int kj = -kHalf; kj <= kHalf; kj++) {
+                    for (int ki = -kHalf; ki <= kHalf; ki++) {
+                        int ix = i + ki;
+                        int jy = j + kj;
+                        if (ix >= 0 && ix < width && jy >= 0 && jy < height) {
+                            sum += kernel[kj + kHalf][ki + kHalf] * heatmap_buffer[jy * width + ix];
+                        }
+                    }
+                }
+                heatmap[j * width + i] = sum / kernelSum;
             }
         }
-
-        // Create a texture from the image and draw it
-        sf::Texture texture;
-        texture.loadFromImage(image);
-        sf::Sprite sprite;
-        sprite.setTexture(texture);
-        m_window.draw(sprite);
     }
-
-    // Render basic coverage/time stats
-    void renderStats()
-    {
-        if (!m_fontLoaded) return; // skip if no font loaded
-
-        // Elapsed time
-        auto now = std::chrono::steady_clock::now();
-        auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(now - m_startTime).count();
-        std::string timeStr = "Time: " + std::to_string(elapsedSec) + "s";
-
-        // Coverage (how many unique pixels visited)
-        float coverage = (static_cast<float>(m_visitedPixels.size()) / (m_width * m_height)) * 100.0f;
-        std::string coverageStr = "Coverage: " + std::to_string(coverage) + "%";
-
-        sf::Text timeText, covText;
-        timeText.setFont(m_font);
-        timeText.setString(timeStr);
-        timeText.setCharacterSize(24);
-        timeText.setFillColor(sf::Color::White);
-        timeText.setPosition(10.f, 10.f);
-
-        covText.setFont(m_font);
-        covText.setString(coverageStr);
-        covText.setCharacterSize(24);
-        covText.setFillColor(sf::Color::White);
-        covText.setPosition(10.f, 40.f);
-
-        m_window.draw(timeText);
-        m_window.draw(covText);
+    
+    // Render the heatmap by creating a texture from pixel data.
+    void renderHeatmap() {
+        SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
+        std::vector<Uint32> pixels(width * height, 0);
+        for (int j = 0; j < height; j++) {
+            for (int i = 0; i < width; i++) {
+                float intensity = heatmap[j * width + i] / max_intensity;
+                if (intensity > 1.0f) intensity = 1.0f;
+                if (intensity < 0.0f) intensity = 0.0f;
+                int colorIndex = static_cast<int>(intensity * (colormap.size() - 1));
+                SDL_Color color = colormap[colorIndex];
+                Uint32 pixel = (color.a << 24) | (color.r << 16) | (color.g << 8) | (color.b);
+                pixels[j * width + i] = pixel;
+            }
+        }
+        SDL_UpdateTexture(texture, NULL, pixels.data(), width * sizeof(Uint32));
+        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_DestroyTexture(texture);
     }
-
-    // Render “buttons” and highlight which mode is active
-    void renderControls()
-    {
-        if (!m_fontLoaded) return;
-
-        // Draw a semi-transparent rectangle at bottom
-        sf::RectangleShape panel(sf::Vector2f(200.f, 60.f));
-        panel.setFillColor(sf::Color(50, 50, 50, 255));
-        panel.setPosition(10.f, m_height - 80.f);
-        m_window.draw(panel);
-
-        // Mouse button
-        sf::RectangleShape mouseBtn(sf::Vector2f(m_mouseButton.width, m_mouseButton.height));
-        mouseBtn.setPosition(m_mouseButton.left, m_mouseButton.top);
-        if (m_mouseMode)
-            mouseBtn.setFillColor(sf::Color(100, 255, 100));
-        else
-            mouseBtn.setFillColor(sf::Color(100, 100, 100));
-        m_window.draw(mouseBtn);
-
-        // CSV button
-        sf::RectangleShape csvBtn(sf::Vector2f(m_csvButton.width, m_csvButton.height));
-        csvBtn.setPosition(m_csvButton.left, m_csvButton.top);
-        if (!m_mouseMode)
-            csvBtn.setFillColor(sf::Color(100, 255, 100));
-        else
-            csvBtn.setFillColor(sf::Color(100, 100, 100));
-        m_window.draw(csvBtn);
-
-        // Text labels
-        sf::Text mouseText("Mouse", m_font, 18);
-        mouseText.setFillColor(sf::Color::Black);
-        mouseText.setPosition(
-            m_mouseButton.left + (m_mouseButton.width - mouseText.getLocalBounds().width) / 2.f,
-            m_mouseButton.top  + (m_mouseButton.height - mouseText.getLocalBounds().height) / 2.f
-        );
-        m_window.draw(mouseText);
-
-        sf::Text csvText("CSV", m_font, 18);
-        csvText.setFillColor(sf::Color::Black);
-        csvText.setPosition(
-            m_csvButton.left + (m_csvButton.width - csvText.getLocalBounds().width) / 2.f,
-            m_csvButton.top  + (m_csvButton.height - csvText.getLocalBounds().height) / 2.f
-        );
-        m_window.draw(csvText);
+    
+    // Render control buttons and their labels.
+    void renderControls() {
+        // Draw background for controls
+        SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+        SDL_RenderFillRect(renderer, &control_rect);
+        
+        // Mouse mode button
+        if (mouse_mode) {
+            SDL_SetRenderDrawColor(renderer, 100, 255, 100, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        }
+        SDL_RenderFillRect(renderer, &mouse_button);
+        
+        // CSV mode button
+        if (!mouse_mode) {
+            SDL_SetRenderDrawColor(renderer, 100, 255, 100, 255);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        }
+        SDL_RenderFillRect(renderer, &csv_button);
+        
+        // Render button text labels
+        renderText("Mouse", small_font, {0, 0, 0, 255}, mouse_button);
+        renderText("CSV", small_font, {0, 0, 0, 255}, csv_button);
     }
-
-    // Handle mouse clicks for toggling “mouse mode” vs “CSV mode”
-    void handleMouseClick(const sf::Vector2i& mousePos)
-    {
-        sf::Vector2f mp = m_window.mapPixelToCoords(mousePos);
-        if (m_mouseButton.contains(mp)) {
-            m_mouseMode = true;
-        } else if (m_csvButton.contains(mp)) {
-            m_mouseMode = false;
+    
+    // Render statistics such as elapsed time and coverage.
+    void renderStats() {
+        Uint32 elapsed_time = (SDL_GetTicks() - start_time) / 1000;
+        std::string time_text = "Time: " + std::to_string(elapsed_time) + "s";
+        renderText(time_text, font, {255, 255, 255, 255}, {10, 10, 200, 40});
+        
+        int visitedCount = 0;
+        for (bool v : visited) {
+            if (v) visitedCount++;
+        }
+        float coverage = (visitedCount / (float)total_area) * 100;
+        std::string coverage_text = "Coverage: " + std::to_string(coverage).substr(0,4) + "%";
+        renderText(coverage_text, font, {255, 255, 255, 255}, {10, 50, 300, 40});
+    }
+    
+    // Helper to render text using SDL_ttf.
+    void renderText(const std::string& text, TTF_Font* f, SDL_Color color, SDL_Rect rect) {
+        SDL_Surface* surface = TTF_RenderText_Blended(f, text.c_str(), color);
+        if (!surface) return;
+        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_FreeSurface(surface);
+        SDL_RenderCopy(renderer, texture, NULL, &rect);
+        SDL_DestroyTexture(texture);
+    }
+    
+    // Handle mouse clicks to toggle between mouse and CSV modes.
+    void handleMouseClick(int x, int y) {
+        if (pointInRect(x, y, mouse_button)) {
+            mouse_mode = true;
+        } else if (pointInRect(x, y, csv_button)) {
+            mouse_mode = false;
         }
     }
-
-private:
-    int m_width;
-    int m_height;
-    sf::RenderWindow m_window;
-    std::vector<float> m_heatmap;        // Our 2D heatmap is flattened into 1D
-    float m_maxIntensity;
-    bool m_mouseMode;                    // Toggle between mouse control / CSV playback
-    sf::Vector2f m_currentPos;           // Current position on the screen
-    std::set<int> m_visitedPixels;       // Track visited pixels (for coverage)
-    std::vector<sf::Color> m_colors;     // Color map
-    std::vector<std::pair<float, float>> m_csvData;
-    size_t m_csvIndex;
-
-    // Font / text rendering
-    sf::Font m_font;
-    bool m_fontLoaded;
-
-    // Time tracking
-    std::chrono::steady_clock::time_point m_startTime;
-
-    // Simple “buttons”
-    sf::FloatRect m_mouseButton;
-    sf::FloatRect m_csvButton;
+    
+    bool pointInRect(int x, int y, const SDL_Rect& rect) {
+        return (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h);
+    }
+    
+    // Draw a filled circle at (centerX, centerY) with the given radius.
+    void drawCircle(int centerX, int centerY, int radius, SDL_Color color) {
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+        for (int w = 0; w < radius * 2; w++) {
+            for (int h = 0; h < radius * 2; h++) {
+                int dx = radius - w;
+                int dy = radius - h;
+                if ((dx * dx + dy * dy) <= (radius * radius)) {
+                    SDL_RenderDrawPoint(renderer, centerX + dx, centerY + dy);
+                }
+            }
+        }
+    }
 };
 
-// ================== MAIN FUNCTION ==================
-int main()
-{
-    // Example usage
-    HeatmapVisualizer visualizer(800, 600);
-
-    // Load CSV data if you have a file named "movement_path.csv"
-    // Ensure your CSV has columns "x,y" for this example
-    visualizer.loadCsv("movement_path.csv");
-
-    // Start the visualization
+int main(int argc, char* argv[]) {
+    const std::string csv_filename = "movement_path.csv";
+    // Generate the CSV file if it doesn't exist.
+    std::ifstream infile(csv_filename);
+    if (!infile.good()) {
+        generateCoordinatePath(csv_filename);
+    }
+    
+    HeatmapVisualizer visualizer(WIDTH, HEIGHT);
+    visualizer.loadCSV(csv_filename);
     visualizer.run();
     
     return 0;
